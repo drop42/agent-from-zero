@@ -6,6 +6,7 @@ import os
 import sys
 import time
 
+from . import scheduler
 from .agent import Session, make_client, run
 from .context import SESSION_DIR
 from .permissions import REMEMBERABLE, render_call
@@ -15,6 +16,7 @@ ALLOWED = {
     int(x) for x in os.environ.get("TG_ALLOWED_USERS", "").split(",") if x.strip()
 }
 CONFIRM_WAIT = int(os.environ.get("TG_CONFIRM_WAIT", 120))
+POLL_TIMEOUT = int(os.environ.get("TG_POLL_TIMEOUT", 10))  # 给调度器留出检查的机会
 
 
 def make_chat_ask(channel, chat_id: int, wait: int = CONFIRM_WAIT):
@@ -52,6 +54,15 @@ def handle_message(tg, client, sessions: dict, chat_id: int, user_id: int, text:
         (SESSION_DIR / f"tg-{chat_id}.json").unlink(missing_ok=True)
         tg.send(chat_id, "会话已重置。")
         return
+    if text.strip() == "/tasks":
+        # 答案确定的事不需要模型，也不该花 token
+        tg.send(
+            chat_id,
+            scheduler.format_tasks(
+                [t for t in scheduler.get_scheduler().tasks if t["chat_id"] == chat_id]
+            ),
+        )
+        return
 
     s = sessions.get(chat_id)
     if s is None:
@@ -59,13 +70,33 @@ def handle_message(tg, client, sessions: dict, chat_id: int, user_id: int, text:
             f"tg-{chat_id}", ask=make_chat_ask(tg, chat_id)
         )
     backup = list(s.messages)
+    scheduler.CURRENT["chat_id"] = chat_id  # schedule_task 需要知道结果发给谁
     try:
         reply = run(s, text, client, log=lambda m: print(f"[{chat_id}] {m}"))
     except Exception as e:
         s.messages[:] = backup  # 回滚，避免留下没有配对的 tool_calls
         reply = f"[出错，本轮已撤销] {type(e).__name__}: {e}"
+    finally:
+        scheduler.CURRENT["chat_id"] = None  # 定时任务运行时它必须是空的
     s.save()
     tg.send(chat_id, reply)
+
+
+def run_due_tasks(tg, client) -> None:
+    sched = scheduler.get_scheduler()
+    for task in sched.due():
+        sched.mark_started(task)  # 先记下一次，再执行：任务崩了也不会反复重跑
+        s = Session(
+            f"task-{task['id']}", ask=scheduler.make_task_ask(task), persist=False
+        )
+        try:
+            reply = run(s, scheduler.task_input(task), client)
+        except Exception as e:
+            reply = f"[定时任务出错] {type(e).__name__}: {e}"
+        if task["kind"] == "heartbeat" and reply.strip() == scheduler.HEARTBEAT_OK:
+            print(f"[心跳] {task['id']} 无事")
+            continue
+        tg.send(task["chat_id"], f"⏰ 任务 {task['id']}\n{reply}")
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -74,7 +105,7 @@ def main(argv: list[str] | None = None) -> None:
             "必须设置 TG_ALLOWED_USERS（逗号分隔的 Telegram 用户 ID），"
             "否则任何人都能操作你的电脑。"
         )
-    tg = Telegram(os.environ["TG_BOT_TOKEN"])
+    tg = Telegram(os.environ["TG_BOT_TOKEN"], timeout=POLL_TIMEOUT)
     client = make_client()
     sessions: dict[int, Session] = {}
     print("nami-agent 已启动")
@@ -87,3 +118,5 @@ def main(argv: list[str] | None = None) -> None:
             continue
         for chat_id, user_id, text in batch:
             handle_message(tg, client, sessions, chat_id, user_id, text)
+        # 消息处理和任务执行在同一线程里轮流进行
+        run_due_tasks(tg, client)

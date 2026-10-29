@@ -8,8 +8,9 @@
 - [EP04｜上下文管理：别让 Agent 被自己的历史撑爆](docs/04-agent-context.md)
 - [EP05｜Skills：让 Agent 按需加载能力](docs/05-agent-skills.md)
 - [EP06｜接入聊天软件：让 Agent 走出终端](docs/06-agent-channels.md)
+- [EP07｜定时任务与心跳：让 Agent 主动找你](docs/07-agent-scheduler.md)
 
-当前实现对应 **EP06**：注册表工具系统 + 权限闸门 + 三层上下文 + 按需技能 + 聊天渠道（Telegram 长轮询、聊天内确认、白名单、出错回滚）。
+当前实现对应 **EP07**：注册表工具系统 + 权限闸门 + 三层上下文 + 按需技能 + 聊天渠道 + 定时任务/心跳（无人值守预授权、错过不补跑、没事不打扰）。
 
 ## 快速开始
 
@@ -107,6 +108,22 @@ uv run agent-bot                                # 长轮询，无需公网 IP
 - 同一个 Bot Token 只能有一个进程在 `getUpdates`，否则返回 `HTTP 409 Conflict`（先杀掉旧的 poller）。
 - 在企业代理 / 自签证书环境，`urllib` 可能报 `CERTIFICATE_VERIFY_FAILED`；可先 `import truststore; truststore.inject_into_ssl()` 再启动。
 
+## 定时任务与心跳
+
+只在 `agent-bot` 里可用（`schedule_task` 需要知道结果发给哪个聊天）：
+
+| 工具 | 风险 | 说明 |
+|---|---|---|
+| `schedule_task` | CONFIRM | 创建任务，`spec` 支持 `every 30m` / `every 2h` / `daily 09:00`，`kind=heartbeat` 为例行检查，`allow` 可预授权 `fetch_url` / `write_file` |
+| `list_tasks` | SAFE | 列出当前聊天的任务；聊天里也可发 `/tasks`（不过模型，不花 token） |
+| `cancel_task` | CONFIRM | 取消当前聊天的任务 |
+
+- **无人值守预授权**：计划任务用 `make_task_ask` 作为 `ask`，只放行创建时预授权的工具；`run_shell` 永远不能预授权，`schedule_task` 也不在可预授权列表里（任务不能创建任务）。
+- **错过不补跑**：`mark_started` 从"现在"重算下次时间，并在执行**前**落盘，崩了也不会反复重跑。
+- **心跳**：回复严格等于 `HEARTBEAT_OK` 才不发送；模型说"HEARTBEAT_OK，一切正常"会被当成有事发出（宁可多打扰一次）。
+- 任务文件 `$NAMI_STATE_DIR/tasks.json` 在工作区之外；写入用临时文件 + 原子替换。
+- `TG_POLL_TIMEOUT`（默认 10 秒）决定调度精度：轮询挂多久，任务就最晚晚多久触发。
+
 ## 结构
 
 ```
@@ -117,7 +134,8 @@ src/agent_from_zero/context.py      # 截断、清理、摘要压缩、会话持
 src/agent_from_zero/skills.py       # SKILL.md 解析、发现、load_skill 工具
 src/agent_from_zero/telegram.py     # Telegram 长轮询渠道
 src/agent_from_zero/bot.py          # 常驻入口：白名单、聊天确认、回滚（agent-bot）
-tests/                              # 权限、上下文、技能、渠道用例
+src/agent_from_zero/scheduler.py    # 定时任务与心跳（agent-bot 每轮检查到期任务）
+tests/                              # 权限、上下文、技能、渠道、定时任务用例
 ```
 
 - 工具输出超过 8000 字符在 `execute` 截断，进入 messages 时再按 4000 字符截断（`MAX_OUTPUT` / `MAX_TOOL_CHARS`）。

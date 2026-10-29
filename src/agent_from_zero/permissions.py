@@ -34,6 +34,9 @@ TOOL_RISK = {
     "run_shell": Risk.CONFIRM,
     "fetch_url": Risk.CONFIRM,
     "load_skill": Risk.SAFE,  # 只读，直接放行
+    "list_tasks": Risk.SAFE,
+    "schedule_task": Risk.CONFIRM,
+    "cancel_task": Risk.CONFIRM,
 }
 
 # 允许"本次会话一直允许"的工具。run_shell 不在里面：每条命令都要过目。

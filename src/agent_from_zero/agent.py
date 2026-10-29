@@ -6,6 +6,7 @@ import sys
 
 from openai import OpenAI
 
+from . import scheduler  # noqa: F401 导入即注册 plan/schedule 相关工具
 from .context import (
     clear_old_tool_results,
     compact,
