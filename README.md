@@ -10,8 +10,9 @@
 - [EP06｜接入聊天软件：让 Agent 走出终端](docs/06-agent-channels.md)
 - [EP07｜定时任务与心跳：让 Agent 主动找你](docs/07-agent-scheduler.md)
 - [EP08｜MCP：接上别人写好的工具](docs/08-agent-mcp.md)
+- [EP09｜子 Agent 与多 Agent：把活分出去](docs/09-agent-subagents.md)
 
-当前实现对应 **EP08**：注册表工具系统 + 权限闸门 + 三层上下文 + 按需技能 + 聊天渠道 + 定时任务/心跳 + MCP 客户端（stdio、JSON-RPC、翻译进注册表）。
+当前实现对应 **EP09**：注册表工具系统 + 权限闸门 + 三层上下文 + 按需技能 + 聊天渠道 + 定时任务/心跳 + MCP 客户端 + 子 Agent（独立上下文、并行只读、只允许一层）。
 
 ## 快速开始
 
@@ -141,6 +142,16 @@ uv run agent-bot                                # 长轮询，无需公网 IP
 - 配置里的 `command` 就是一条可执行命令，所以配置只放在工作区之外；一个服务器起不来不影响其他服务器。
 - `examples/demo_mcp_server.py` 是配套的最小服务器（stdio、一行一条 JSON-RPC）。
 
+## 子 Agent
+
+主 Agent 用 `delegate` / `delegate_parallel` 把活派出去，子 Agent 在自己干净的上下文里干完，只交回结论：
+
+- `Session(tools=..., system=..., depth=...)` 限定工具集；`session.schemas()` 只把允许的工具发给模型，`handle_call` 在执行层再挡一次（模型编造工具名也无效）。
+- `explore` 只拿 SAFE 工具（由 `TOOL_RISK` 推算，所以 MCP 里标了 `safe_tools` 的也会自动出现）；`worker` 还能写文件、跑命令，副作用操作照常要你确认。
+- `ask=parent.perms.ask`：子 Agent 不会比派它的 Agent 权限更大；`persist=False` 用完即弃；上限 `SUB_MAX_STEPS=15`、`MAX_PARALLEL=3`、结论 `RESULT_LIMIT=3000`。
+- 只允许一层（`MAX_DEPTH=1`），子 Agent 拿不到 `delegate` / `delegate_parallel` / `schedule_task` 这类工具。
+- `agent.CURRENT`（`ContextVar`）记录当前运行上下文，供工具反查父会话；并行子 Agent 各线程互不干扰。
+
 ## 结构
 
 ```
@@ -153,8 +164,9 @@ src/agent_from_zero/telegram.py     # Telegram 长轮询渠道
 src/agent_from_zero/bot.py          # 常驻入口：白名单、聊天确认、回滚（agent-bot）
 src/agent_from_zero/scheduler.py    # 定时任务与心跳（agent-bot 每轮检查到期任务）
 src/agent_from_zero/mcp_client.py   # MCP 客户端：stdio/JSON-RPC、翻译进注册表
+src/agent_from_zero/subagent.py     # delegate / delegate_parallel（独立 Session）
 examples/demo_mcp_server.py         # 示例 MCP 服务器（标准库，两个工具）
-tests/                              # 权限、上下文、技能、渠道、定时任务、MCP 用例
+tests/                              # 权限、上下文、技能、渠道、定时任务、MCP、子 Agent 用例
 ```
 
 - 工具输出超过 8000 字符在 `execute` 截断，进入 messages 时再按 4000 字符截断（`MAX_OUTPUT` / `MAX_TOOL_CHARS`）。

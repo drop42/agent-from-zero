@@ -61,6 +61,9 @@ uv lock                     # 仅重算锁文件（如改了 requires-python）
 - MCP 在 `mcp_client.py`：`MCPServer`（stdio、一行一条 JSON-RPC、按 id 配对、读超时 30s）、`register_server`（名字 `mcp__服务器__工具`，未点名 `safe_tools` 的工具默认 CONFIRM）、`load_servers`（读 `$NAMI_STATE_DIR/mcp.json`）。
 - MCP 配置里的 `command` 会被执行，所以配置文件**必须在工作区之外**；新增服务器失败只记日志，不影响其他服务器。
 - 两个入口（`agent.main` / `bot.main`）都在建 `Session` 之前调用 `mcp_client.load_servers()`。
+- 子 Agent 在 `subagent.py`：`toolset(kind)` 从 `TOOL_RISK` 推算工具集（explore 只有 SAFE），`_spawn` 用 `Session(..., persist=False, ask=parent.perms.ask, depth=parent.depth+1)`；`MAX_DEPTH=1`、`SUB_MAX_STEPS=15`、`MAX_PARALLEL=3`。
+- 工具可见性有两道：`session.schemas()` 只发允许的说明书，`handle_call(..., allowed=session.tools)` 在执行层再挡一次。
+- `agent.CURRENT` 是 `ContextVar`（并行子 Agent 各线程独立），`run()` 设置/重置它；`subagent._current()` 负责取父会话并检查层数。
 
 ## 代码结构
 
@@ -75,6 +78,7 @@ src/agent_from_zero/telegram.py    # Telegram 长轮询渠道（EP06）
 src/agent_from_zero/bot.py         # 常驻入口 agent-bot：白名单/聊天确认/回滚/到期任务（EP06-07）
 src/agent_from_zero/scheduler.py   # 定时任务、心跳、无人值守预授权（EP07）
 src/agent_from_zero/mcp_client.py  # MCP 客户端（EP08）：stdio/JSON-RPC、翻译进 TOOLS
+src/agent_from_zero/subagent.py    # 子 Agent（EP09）：delegate / delegate_parallel
 examples/demo_mcp_server.py        # 示例 MCP 服务器（测试会真的启动它）
 tests/conftest.py                 # 把测试工作区与会话目录指向临时目录
 tests/test_permissions.py         # 权限用例
@@ -83,6 +87,7 @@ tests/test_skills.py              # 技能用例
 tests/test_bot.py                 # 渠道、白名单、回滚用例
 tests/test_scheduler.py           # 时间规则、不补跑、预授权、心跳静默
 tests/test_mcp.py                 # 握手、注册、isError、坏服务器隔离
+tests/test_subagent.py            # 结论回传、工具清单、层数限制、并行上限
 pyproject.toml                    # 元数据、依赖、入口点、构建后端
 uv.lock                           # 锁文件
 .python-version                   # 3.12.13
@@ -96,6 +101,7 @@ docs/05-agent-skills.md           # 教程原文（EP05：技能）
 docs/06-agent-channels.md         # 教程原文（EP06：聊天渠道）
 docs/07-agent-scheduler.md        # 教程原文（EP07：定时任务与心跳）
 docs/08-agent-mcp.md              # 教程原文（EP08：MCP）
+docs/09-agent-subagents.md        # 教程原文（EP09：子 Agent）
 ```
 
 - 可直接导入的代码放在 `src/agent_from_zero/` 下，新增模块即新增文件；`src` 不需也不应加入 `sys.path` 手工处理。

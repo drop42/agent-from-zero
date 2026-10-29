@@ -1,5 +1,6 @@
 """EP06：核心逻辑与 I/O 分离 —— 一个会话 = messages + 权限 + 上一次 token 数。"""
 
+import contextvars
 import json
 import os
 import sys
@@ -8,6 +9,7 @@ from openai import OpenAI
 
 from . import scheduler  # noqa: F401 导入即注册 plan/schedule 相关工具
 from . import mcp_client
+from . import subagent  # noqa: F401 导入即注册 delegate 工具
 from .context import (
     clear_old_tool_results,
     compact,
@@ -48,15 +50,28 @@ def make_client() -> OpenAI:
 
 
 class Session:
-    """一个会话 = 一份 messages + 一个权限管理器 + 上一次的 token 数。"""
+    """一个会话 = messages + 权限管理器 + 上一次 token 数。
 
-    def __init__(self, name: str, ask=None, persist: bool = True):
+    tools 限定能用的工具（None 表示全部），system 可替换，depth 记录是第几层。
+    """
+
+    def __init__(
+        self,
+        name: str,
+        ask=None,
+        persist: bool = True,
+        tools=None,
+        system: str | None = None,
+        depth: int = 0,
+    ):
         self.name = name
         self.persist = persist
+        self.tools = set(tools) if tools is not None else None
+        self.depth = depth
         saved = load_session(name) if persist else None
         self.messages = saved or [{"role": "system", "content": ""}]
         # 会话里存的是旧 system prompt，每次用最新的技能列表覆盖第一条
-        self.messages[0] = {"role": "system", "content": build_system()}
+        self.messages[0] = {"role": "system", "content": system or build_system()}
         self.perms = PermissionManager(ask=ask)
         self.prompt_tokens = 0
 
@@ -64,10 +79,19 @@ class Session:
         if self.persist:
             save_session(self.name, self.messages)
 
+    def schemas(self) -> list[dict]:
+        all_ = get_schemas()
+        if self.tools is None:
+            return all_
+        return [s for s in all_ if s["function"]["name"] in self.tools]
 
-def handle_call(call, perms: PermissionManager) -> str:
+
+def handle_call(call, perms: PermissionManager, allowed=None) -> str:
     """解析参数 → 权限检查 → 执行。永远返回字符串。"""
     name = call.function.name
+    if allowed is not None and name not in allowed:
+        # 模型偶尔会编出一个没发给它的工具名；能不能用由执行层说了算
+        return f"Error: 当前不能使用工具 {name}"
     try:
         args = json.loads(call.function.arguments or "{}")
     except json.JSONDecodeError:
@@ -78,11 +102,26 @@ def handle_call(call, perms: PermissionManager) -> str:
     return execute(name, args)
 
 
-def run(session: Session, user_input: str, client, model: str = MODEL, log=print) -> str:
+# 子 Agent 的工具需要知道"是谁派的我"：用 ContextVar 而不是全局变量，
+# 因为并行子 Agent 会在多个线程里同时运行
+CURRENT: contextvars.ContextVar = contextvars.ContextVar("current_run", default=None)
+
+
+def run(
+    session: Session, user_input: str, client, model: str = MODEL, log=print, max_steps: int = MAX_STEPS
+) -> str:
+    token = CURRENT.set((session, client, model, log))
+    try:
+        return _loop(session, user_input, client, model, log, max_steps)
+    finally:
+        CURRENT.reset(token)
+
+
+def _loop(session: Session, user_input: str, client, model: str, log, max_steps: int) -> str:
     messages = session.messages
     messages.append({"role": "user", "content": user_input})
 
-    for _ in range(MAX_STEPS):
+    for _ in range(max_steps):
         # 用上一次调用的真实 token 数决定这一轮要不要处理
         if session.prompt_tokens > HARD_LIMIT:
             messages[:] = compact(client, model, messages)
@@ -90,7 +129,7 @@ def run(session: Session, user_input: str, client, model: str = MODEL, log=print
             clear_old_tool_results(messages)
 
         resp = client.chat.completions.create(
-            model=model, messages=messages, tools=get_schemas()
+            model=model, messages=messages, tools=session.schemas()
         )
         session.prompt_tokens = resp.usage.prompt_tokens if resp.usage else 0
         msg = resp.choices[0].message
@@ -103,7 +142,7 @@ def run(session: Session, user_input: str, client, model: str = MODEL, log=print
         # 模型可能一轮里请求多个工具，每个都必须回应
         for call in msg.tool_calls:
             log(f"🔧 {call.function.name}({call.function.arguments[:80]})")
-            result = handle_call(call, session.perms)
+            result = handle_call(call, session.perms, session.tools)
             messages.append(
                 {
                     "role": "tool",
