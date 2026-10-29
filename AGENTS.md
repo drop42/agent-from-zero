@@ -51,6 +51,10 @@ uv lock                     # 仅重算锁文件（如改了 requires-python）
 - 触发依据是 API 返回的 `usage.prompt_tokens`（`agent.usage`），不要自己估算 token。
 - 会话文件在 `$NAMI_STATE_DIR/sessions/<name>.json`（默认 `~/.nami-agent`），**必须在工作区之外**；`tests/test_context.py` 会校验这一点。
 - 断言 tool 消息配对用 `context.check_pairing`，压缩改动后必须跑。
+- 技能在 `skills.py`：`parse_skill`（只解析顶层 `key: value`，用 `partition(":")` 保留描述里的冒号）、`discover`、`skills_section`、`project_notes`（读工作区 `AGENTS.md`，截断 3000 字）、`load_skill` 工具。
+- `agent.build_system()` = 基础说明 + `project_notes()` + `skills_section()`；启动时用它覆盖 `messages[0]`，否则旧会话里是过期的技能列表。
+- 技能目录 `SKILLS_DIR = WORKSPACE / "skills"` 对 Agent 只读：`write_file` 命中它属于第 1 关硬规则，`y` 也不能放行。
+- 技能结果以 `[skill]` 开头，并在 `context.KEEP_PREFIXES` 中豁免第 2 层清理。
 
 ## 代码结构
 
@@ -60,9 +64,11 @@ src/agent_from_zero/agent.py      # 主循环 + handle_call 权限闸门 + REPL/
 src/agent_from_zero/tools.py      # 工具注册表、五个工具、execute() 统一执行器
 src/agent_from_zero/permissions.py # 硬规则 / 风险分级 / 人工确认（EP03）
 src/agent_from_zero/context.py     # 截断 / 清理 / 摘要 / 会话持久化（EP04）
+src/agent_from_zero/skills.py      # 技能解析、发现、load_skill（EP05）
 tests/conftest.py                 # 把测试工作区与会话目录指向临时目录
 tests/test_permissions.py         # 权限用例
 tests/test_context.py             # 上下文用例
+tests/test_skills.py              # 技能用例
 pyproject.toml                    # 元数据、依赖、入口点、构建后端
 uv.lock                           # 锁文件
 .python-version                   # 3.12.13
@@ -72,6 +78,7 @@ docs/01-agent-minimal-loop.md     # 教程原文（EP01：最小 Agent 循环）
 docs/02-agent-tools.md            # 教程原文（EP02：工具系统）
 docs/03-agent-permissions.md      # 教程原文（EP03：权限）
 docs/04-agent-context.md          # 教程原文（EP04：上下文管理）
+docs/05-agent-skills.md           # 教程原文（EP05：技能）
 ```
 
 - 可直接导入的代码放在 `src/agent_from_zero/` 下，新增模块即新增文件；`src` 不需也不应加入 `sys.path` 手工处理。

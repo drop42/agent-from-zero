@@ -6,8 +6,9 @@
 - [EP02｜工具系统：加工具不再改主循环](docs/02-agent-tools.md)
 - [EP03｜权限：给 Agent 装上刹车](docs/03-agent-permissions.md)
 - [EP04｜上下文管理：别让 Agent 被自己的历史撑爆](docs/04-agent-context.md)
+- [EP05｜Skills：让 Agent 按需加载能力](docs/05-agent-skills.md)
 
-当前实现对应 **EP04**：注册表工具系统 + 三道权限闸门 + 三层上下文管理（截断 / 清理 / 摘要），会话持久化到工作区之外。
+当前实现对应 **EP05**：注册表工具系统 + 三道权限闸门 + 三层上下文管理 + 按需加载的技能（AGENTS.md 常驻、`skills/*/SKILL.md` 按需读取且对 Agent 只读）。
 
 ## 快速开始
 
@@ -67,16 +68,35 @@ def get_time() -> str:
     return datetime.now().isoformat()
 ```
 
+## 技能
+
+工作区根目录的 `AGENTS.md` 常驻 system prompt（截断到 3000 字）；`skills/<name>/SKILL.md` 只在 system prompt 里出现一行「名字：用途」，模型判断相关时调用 `load_skill` 读取全文：
+
+```markdown
+---
+name: git-commit
+description: 按团队规范写 git 提交信息。用户要求提交代码或写 commit message 时使用。
+---
+
+# 提交信息规范
+...
+```
+
+- 技能目录对 Agent **只读**：`write_file` 命中 `skills/` 会被硬规则拒绝（`run_shell` 仍可用，但每条命令要确认）。
+- 技能内容以 `[skill]` 开头，不参与上下文第 2 层清理，避免任务中途"忘记规矩"。
+- 缺 `description` 的 `SKILL.md` 会被跳过并打印提示。
+- 技能目录下的其他文件（如 `template.md`）会在加载时列出，模型可用 `read_file` 按需读取。
+
 ## 结构
 
 ```
-src/agent_from_zero/agent.py        # 主循环、handle_call、上下文阈值、会话读写
+src/agent_from_zero/agent.py        # 主循环、handle_call、上下文阈值、build_system、会话读写
 src/agent_from_zero/tools.py        # 注册表、五个工具、execute() 统一执行器
 src/agent_from_zero/permissions.py  # 硬规则、风险分级、人工确认
 src/agent_from_zero/context.py      # 截断、清理、摘要压缩、会话持久化
-tests/                              # 权限与上下文用例
+src/agent_from_zero/skills.py       # SKILL.md 解析、发现、load_skill 工具
+tests/                              # 权限、上下文、技能用例
 ```
-
 - 工具输出超过 8000 字符在 `execute` 截断，进入 messages 时再按 4000 字符截断（`MAX_OUTPUT` / `MAX_TOOL_CHARS`）。
 - 工具异常、未知工具名、参数错误都作为 `Error: ...` 文本回传给模型，让它自行修正。
 - 单次任务最多 20 步（`MAX_STEPS`）。

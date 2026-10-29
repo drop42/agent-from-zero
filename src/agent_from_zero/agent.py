@@ -33,6 +33,13 @@ SYSTEM = (
 usage = {"prompt_tokens": 0}  # 上一次调用的真实 token 数
 
 
+def build_system() -> str:
+    """基础说明 + AGENTS.md（常驻）+ 技能目录（只有名字和一句话用途）。"""
+    from . import skills  # noqa: F401 导入即注册 load_skill
+
+    return SYSTEM + skills.project_notes() + skills.skills_section()
+
+
 def _client() -> OpenAI:
     """延迟构造，避免 import 阶段就要求 API_KEY。"""
     api_key = os.environ.get("API_KEY")
@@ -95,7 +102,9 @@ def run(user_input: str, messages: list[dict], perms: PermissionManager) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
-    messages = load_session("default") or [{"role": "system", "content": SYSTEM}]
+    messages = load_session("default") or [{"role": "system", "content": ""}]
+    # 会话里存的是旧 system prompt，用最新的技能列表覆盖第一条
+    messages[0] = {"role": "system", "content": build_system()}
     perms = PermissionManager()
 
     # 带参数 = 单次任务（便于脚本化）；不带参数 = 交互式对话

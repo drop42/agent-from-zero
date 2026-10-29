@@ -19,6 +19,9 @@ SESSION_DIR = STATE_DIR / "sessions"
 
 PLACEHOLDER = "[旧工具结果已清理，如需要请重新调用工具]"
 
+# 以这些前缀开头的工具结果不参与第 2 层清理（技能说明被清掉，模型会中途忘记规矩）
+KEEP_PREFIXES = ("[skill]",)
+
 SUMMARY_PROMPT = """你是对话摘要器。把下面这段 Agent 的历史对话压缩成摘要，要求：
 1. 保留：用户的目标、已完成的步骤、关键结论、重要的文件路径和参数、尚未解决的问题
 2. 丢弃：寒暄、重复内容、工具返回的大段原文
@@ -44,7 +47,11 @@ def clear_old_tool_results(
     messages: list[dict], keep: int = KEEP_RECENT_TOOL_RESULTS
 ) -> None:
     """只改 content，不删消息：删了会产生孤立的 tool_call_id。"""
-    tool_idx = [i for i, m in enumerate(messages) if m["role"] == "tool"]
+    tool_idx = [
+        i
+        for i, m in enumerate(messages)
+        if m["role"] == "tool" and not m["content"].startswith(KEEP_PREFIXES)
+    ]
     old = tool_idx[:-keep] if keep > 0 else tool_idx
     for i in old:
         messages[i]["content"] = PLACEHOLDER

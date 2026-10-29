@@ -16,6 +16,9 @@ from textwrap import indent
 # Agent 只允许碰这个目录。默认是启动时的当前目录。
 WORKSPACE = Path(os.environ.get("NAMI_WORKSPACE", os.getcwd())).resolve()
 
+# 技能目录：Agent 可以读，不能写（防止注入内容被写成技能后反复触发）
+SKILLS_DIR = WORKSPACE / "skills"
+
 
 class Risk(Enum):
     SAFE = "safe"  # 只读：直接放行
@@ -30,6 +33,7 @@ TOOL_RISK = {
     "write_file": Risk.CONFIRM,
     "run_shell": Risk.CONFIRM,
     "fetch_url": Risk.CONFIRM,
+    "load_skill": Risk.SAFE,  # 只读，直接放行
 }
 
 # 允许"本次会话一直允许"的工具。run_shell 不在里面：每条命令都要过目。
@@ -105,8 +109,11 @@ class PermissionManager:
     def _hard_limits(self, name: str, args: dict) -> str | None:
         if name in ("read_file", "write_file", "list_dir"):
             path = args.get("path", ".")
-            if resolve_in_workspace(path) is None:
+            p = resolve_in_workspace(path)
+            if p is None:
                 return f"路径 {path!r} 在工作区 {WORKSPACE} 之外，禁止访问。"
+            if name == "write_file" and p.is_relative_to(SKILLS_DIR):
+                return "技能目录是只读的，Agent 不能修改自己的技能。"
         if name == "run_shell":
             cmd = args.get("command", "")
             for pat in SHELL_DENY_PATTERNS:
