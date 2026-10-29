@@ -11,8 +11,9 @@
 - [EP07｜定时任务与心跳：让 Agent 主动找你](docs/07-agent-scheduler.md)
 - [EP08｜MCP：接上别人写好的工具](docs/08-agent-mcp.md)
 - [EP09｜子 Agent 与多 Agent：把活分出去](docs/09-agent-subagents.md)
+- [EP10｜计划：先说要做什么，再动手](docs/10-agent-planning.md)
 
-当前实现对应 **EP09**：注册表工具系统 + 权限闸门 + 三层上下文 + 按需技能 + 聊天渠道 + 定时任务/心跳 + MCP 客户端 + 子 Agent（独立上下文、并行只读、只允许一层）。
+当前实现对应 **EP10**：注册表工具 + 权限闸门 + 上下文管理 + 按需技能 + 聊天渠道 + 定时任务 + MCP + 子 Agent + 计划（待办清单 / 代码强制只读的计划模式）。
 
 ## 快速开始
 
@@ -152,6 +153,13 @@ uv run agent-bot                                # 长轮询，无需公网 IP
 - 只允许一层（`MAX_DEPTH=1`），子 Agent 拿不到 `delegate` / `delegate_parallel` / `schedule_task` 这类工具。
 - `agent.CURRENT`（`ContextVar`）记录当前运行上下文，供工具反查父会话；并行子 Agent 各线程互不干扰。
 
+## 计划
+
+- `update_plan(steps)`（SAFE）：把分步计划写进上下文，每次传完整列表；旧版计划消息原地替换成「已被取代」，同一时间最多一个 `in_progress`，最新一版存在 `Session.plan`。
+- 计划模式：终端或聊天里发 `/plan <任务>` 进入（`planning.enter_plan_mode`，模型无法自己进入）。权限层在"一直允许"之前拦截——非 SAFE 且非 `submit_plan` 的操作**直接拒绝、不弹确认**。
+- `submit_plan`（CONFIRM）：走第 3 课的确认流程，确认界面展示计划全文；用户按 `y` 才退出计划模式，按 `n` 附原因则留在计划模式继续改。
+- 子 Agent 继承 `perms.mode`，且拿不到 `submit_plan`。
+
 ## 结构
 
 ```
@@ -165,8 +173,9 @@ src/agent_from_zero/bot.py          # 常驻入口：白名单、聊天确认、
 src/agent_from_zero/scheduler.py    # 定时任务与心跳（agent-bot 每轮检查到期任务）
 src/agent_from_zero/mcp_client.py   # MCP 客户端：stdio/JSON-RPC、翻译进注册表
 src/agent_from_zero/subagent.py     # delegate / delegate_parallel（独立 Session）
+src/agent_from_zero/planning.py     # update_plan / submit_plan / 计划模式
 examples/demo_mcp_server.py         # 示例 MCP 服务器（标准库，两个工具）
-tests/                              # 权限、上下文、技能、渠道、定时任务、MCP、子 Agent 用例
+tests/                              # 权限、上下文、技能、渠道、定时任务、MCP、子 Agent、计划用例
 ```
 
 - 工具输出超过 8000 字符在 `execute` 截断，进入 messages 时再按 4000 字符截断（`MAX_OUTPUT` / `MAX_TOOL_CHARS`）。

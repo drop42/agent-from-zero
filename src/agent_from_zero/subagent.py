@@ -22,6 +22,7 @@ NEVER_FOR_SUB = {
     "schedule_task",
     "cancel_task",
     "list_tasks",
+    "submit_plan",  # 计划只能由主 Agent 提交
 }
 
 SUB_SYSTEM = (
@@ -64,6 +65,7 @@ def _spawn(task, kind, parent, client, model, log, idx=None) -> str:
         system=SUB_SYSTEM,
         depth=parent.depth + 1,
     )
+    sub.perms.mode = parent.perms.mode  # 计划模式下派出去的子 Agent 也只能读
     try:
         result = run(
             sub,

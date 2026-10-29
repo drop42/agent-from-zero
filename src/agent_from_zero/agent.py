@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from . import scheduler  # noqa: F401 导入即注册 plan/schedule 相关工具
 from . import mcp_client
+from . import planning  # noqa: F401 导入即注册 update_plan / submit_plan
 from . import subagent  # noqa: F401 导入即注册 delegate 工具
 from .context import (
     clear_old_tool_results,
@@ -74,6 +75,7 @@ class Session:
         self.messages[0] = {"role": "system", "content": system or build_system()}
         self.perms = PermissionManager(ask=ask)
         self.prompt_tokens = 0
+        self.plan: list[dict] = []  # 第 10 课：最近一版待办清单
 
     def save(self) -> None:
         if self.persist:
@@ -176,6 +178,10 @@ def main(argv: list[str] | None = None) -> None:
         if q in ("exit", "quit"):
             break
         if not q:
+            continue
+        if q.startswith("/plan "):  # 第 10 课：进不进计划模式，由人决定
+            print("\n" + run(session, planning.enter_plan_mode(session, q[6:]), client) + "\n")
+            session.save()
             continue
         print("\n" + run(session, q, client) + "\n")
         session.save()

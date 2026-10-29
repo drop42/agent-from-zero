@@ -6,7 +6,7 @@ import os
 import sys
 import time
 
-from . import mcp_client, scheduler
+from . import mcp_client, planning, scheduler
 from .agent import Session, make_client, run
 from .context import SESSION_DIR
 from .permissions import REMEMBERABLE, render_call
@@ -70,6 +70,8 @@ def handle_message(tg, client, sessions: dict, chat_id: int, user_id: int, text:
             f"tg-{chat_id}", ask=make_chat_ask(tg, chat_id)
         )
     backup = list(s.messages)
+    if text.startswith("/plan "):  # 第 10 课：让人决定是否进入计划模式
+        text = planning.enter_plan_mode(s, text[6:])
     scheduler.CURRENT["chat_id"] = chat_id  # schedule_task 需要知道结果发给谁
     try:
         reply = run(s, text, client, log=lambda m: print(f"[{chat_id}] {m}"))

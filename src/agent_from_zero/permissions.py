@@ -35,6 +35,8 @@ TOOL_RISK = {
     "fetch_url": Risk.CONFIRM,
     "load_skill": Risk.SAFE,  # 只读，直接放行
     "list_tasks": Risk.SAFE,
+    "update_plan": Risk.SAFE,  # 只是记一份清单
+    "submit_plan": Risk.CONFIRM,  # 要走确认流程给人看
     "delegate": Risk.SAFE,  # 派出子 Agent 本身没有副作用
     "delegate_parallel": Risk.SAFE,
     "schedule_task": Risk.CONFIRM,
@@ -78,6 +80,8 @@ def render_call(name: str, args: dict, max_chars: int = 400) -> str:
     """确认界面：展示将要执行的真实内容，而不是模型的自述。"""
     if name == "run_shell":
         return f"  $ {args.get('command', '')}"
+    if name == "submit_plan":  # 第 10 课：计划全文都要给人看
+        return indent(args.get("plan", ""), "  ")
     if name == "write_file":
         content = args.get("content", "")
         preview = content[:max_chars]
@@ -90,6 +94,7 @@ def render_call(name: str, args: dict, max_chars: int = 400) -> str:
 class PermissionManager:
     def __init__(self, ask=None):
         self.always_allowed: set[str] = set()
+        self.mode = "normal"  # 第 10 课："plan" 时只能读，由代码强制
         # ask 可注入：ask(name, args) -> (answer, 拒绝原因)
         self.ask = ask or self._ask_terminal
 
@@ -102,6 +107,12 @@ class PermissionManager:
 
         # 第 2 关：风险分级
         risk = TOOL_RISK.get(name, Risk.CONFIRM)
+        # 第 10 课：计划模式下，除了提交计划，一切有副作用的操作都拒绝，问都不问
+        if self.mode == "plan" and risk is not Risk.SAFE and name != "submit_plan":
+            return Decision(
+                False,
+                "当前是计划模式，只能读和调查。想好后调用 submit_plan 提交计划，批准后才能动手。",
+            )
         if risk is Risk.DENY:
             return Decision(False, f"工具 {name} 被策略禁用。")
         if risk is Risk.SAFE or name in self.always_allowed:
