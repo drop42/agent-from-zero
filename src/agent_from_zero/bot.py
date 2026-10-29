@@ -6,7 +6,7 @@ import os
 import sys
 import time
 
-from . import scheduler
+from . import mcp_client, scheduler
 from .agent import Session, make_client, run
 from .context import SESSION_DIR
 from .permissions import REMEMBERABLE, render_call
@@ -107,6 +107,7 @@ def main(argv: list[str] | None = None) -> None:
         )
     tg = Telegram(os.environ["TG_BOT_TOKEN"], timeout=POLL_TIMEOUT)
     client = make_client()
+    mcp_client.load_servers()  # 第 8 课：先接入 MCP 工具，再建会话
     sessions: dict[int, Session] = {}
     print("nami-agent 已启动")
     while True:

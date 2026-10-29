@@ -9,8 +9,9 @@
 - [EP05｜Skills：让 Agent 按需加载能力](docs/05-agent-skills.md)
 - [EP06｜接入聊天软件：让 Agent 走出终端](docs/06-agent-channels.md)
 - [EP07｜定时任务与心跳：让 Agent 主动找你](docs/07-agent-scheduler.md)
+- [EP08｜MCP：接上别人写好的工具](docs/08-agent-mcp.md)
 
-当前实现对应 **EP07**：注册表工具系统 + 权限闸门 + 三层上下文 + 按需技能 + 聊天渠道 + 定时任务/心跳（无人值守预授权、错过不补跑、没事不打扰）。
+当前实现对应 **EP08**：注册表工具系统 + 权限闸门 + 三层上下文 + 按需技能 + 聊天渠道 + 定时任务/心跳 + MCP 客户端（stdio、JSON-RPC、翻译进注册表）。
 
 ## 快速开始
 
@@ -124,6 +125,22 @@ uv run agent-bot                                # 长轮询，无需公网 IP
 - 任务文件 `$NAMI_STATE_DIR/tasks.json` 在工作区之外；写入用临时文件 + 原子替换。
 - `TG_POLL_TIMEOUT`（默认 10 秒）决定调度精度：轮询挂多久，任务就最晚晚多久触发。
 
+## MCP
+
+接入外部工具，不装 SDK：
+
+```json
+// $NAMI_STATE_DIR/mcp.json（默认 ~/.nami-agent/mcp.json，必须在工作区之外）
+{"servers": {"demo": {"command": "python", "args": ["examples/demo_mcp_server.py"],
+                      "safe_tools": ["now", "word_count"]}}}
+```
+
+- 启动时 `mcp_client.load_servers()`：`initialize` → `notifications/initialized` → `tools/list`，逐个翻译成 `mcp__<服务器>__<工具>` 注册进 `TOOLS`。
+- `inputSchema` 原样作为 `parameters`；工具异常通过 `isError` 翻译成 `Error: ...`，与本地工具一致。
+- 风险等级：未点名的 MCP 工具一律 CONFIRM；`safe_tools` 里的标为 SAFE。
+- 配置里的 `command` 就是一条可执行命令，所以配置只放在工作区之外；一个服务器起不来不影响其他服务器。
+- `examples/demo_mcp_server.py` 是配套的最小服务器（stdio、一行一条 JSON-RPC）。
+
 ## 结构
 
 ```
@@ -135,7 +152,9 @@ src/agent_from_zero/skills.py       # SKILL.md 解析、发现、load_skill 工�
 src/agent_from_zero/telegram.py     # Telegram 长轮询渠道
 src/agent_from_zero/bot.py          # 常驻入口：白名单、聊天确认、回滚（agent-bot）
 src/agent_from_zero/scheduler.py    # 定时任务与心跳（agent-bot 每轮检查到期任务）
-tests/                              # 权限、上下文、技能、渠道、定时任务用例
+src/agent_from_zero/mcp_client.py   # MCP 客户端：stdio/JSON-RPC、翻译进注册表
+examples/demo_mcp_server.py         # 示例 MCP 服务器（标准库，两个工具）
+tests/                              # 权限、上下文、技能、渠道、定时任务、MCP 用例
 ```
 
 - 工具输出超过 8000 字符在 `execute` 截断，进入 messages 时再按 4000 字符截断（`MAX_OUTPUT` / `MAX_TOOL_CHARS`）。

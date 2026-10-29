@@ -7,6 +7,7 @@ import sys
 from openai import OpenAI
 
 from . import scheduler  # noqa: F401 导入即注册 plan/schedule 相关工具
+from . import mcp_client
 from .context import (
     clear_old_tool_results,
     compact,
@@ -118,6 +119,7 @@ def run(session: Session, user_input: str, client, model: str = MODEL, log=print
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     client = make_client()
+    mcp_client.load_servers()  # 第 8 课：先接入 MCP 工具，再建会话
     session = Session("default")  # ask 不传，默认还是终端确认
 
     # 带参数 = 单次任务（便于脚本化）；不带参数 = 交互式对话

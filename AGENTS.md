@@ -58,6 +58,9 @@ uv lock                     # 仅重算锁文件（如改了 requires-python）
 - 会话状态在 `agent.Session`（messages + perms + prompt_tokens）；`run(session, text, client, ..., log=print)` 不读全局，渠道只提供 I/O 与 `ask`。
 - 渠道在 `telegram.py`（`fetch` 只拉新消息、`poll` 先交 `pending`、`send` 按 4000 字切段）；常驻入口 `bot.py`（`agent-bot`）：`TG_ALLOWED_USERS` 为空直接退出，非白名单只记日志不回复，`/reset` 清会话，每轮备份 messages 并在异常时整轮回滚。
 - 同一 Bot Token 只能有一个 `getUpdates` 进程，否则 `HTTP 409 Conflict`。Bot Token 只放环境变量，禁止写入仓库。
+- MCP 在 `mcp_client.py`：`MCPServer`（stdio、一行一条 JSON-RPC、按 id 配对、读超时 30s）、`register_server`（名字 `mcp__服务器__工具`，未点名 `safe_tools` 的工具默认 CONFIRM）、`load_servers`（读 `$NAMI_STATE_DIR/mcp.json`）。
+- MCP 配置里的 `command` 会被执行，所以配置文件**必须在工作区之外**；新增服务器失败只记日志，不影响其他服务器。
+- 两个入口（`agent.main` / `bot.main`）都在建 `Session` 之前调用 `mcp_client.load_servers()`。
 
 ## 代码结构
 
@@ -71,12 +74,15 @@ src/agent_from_zero/skills.py      # 技能解析、发现、load_skill（EP05�
 src/agent_from_zero/telegram.py    # Telegram 长轮询渠道（EP06）
 src/agent_from_zero/bot.py         # 常驻入口 agent-bot：白名单/聊天确认/回滚/到期任务（EP06-07）
 src/agent_from_zero/scheduler.py   # 定时任务、心跳、无人值守预授权（EP07）
+src/agent_from_zero/mcp_client.py  # MCP 客户端（EP08）：stdio/JSON-RPC、翻译进 TOOLS
+examples/demo_mcp_server.py        # 示例 MCP 服务器（测试会真的启动它）
 tests/conftest.py                 # 把测试工作区与会话目录指向临时目录
 tests/test_permissions.py         # 权限用例
 tests/test_context.py             # 上下文用例
 tests/test_skills.py              # 技能用例
 tests/test_bot.py                 # 渠道、白名单、回滚用例
 tests/test_scheduler.py           # 时间规则、不补跑、预授权、心跳静默
+tests/test_mcp.py                 # 握手、注册、isError、坏服务器隔离
 pyproject.toml                    # 元数据、依赖、入口点、构建后端
 uv.lock                           # 锁文件
 .python-version                   # 3.12.13
@@ -89,6 +95,7 @@ docs/04-agent-context.md          # 教程原文（EP04：上下文管理）
 docs/05-agent-skills.md           # 教程原文（EP05：技能）
 docs/06-agent-channels.md         # 教程原文（EP06：聊天渠道）
 docs/07-agent-scheduler.md        # 教程原文（EP07：定时任务与心跳）
+docs/08-agent-mcp.md              # 教程原文（EP08：MCP）
 ```
 
 - 可直接导入的代码放在 `src/agent_from_zero/` 下，新增模块即新增文件；`src` 不需也不应加入 `sys.path` 手工处理。
