@@ -6,8 +6,9 @@
 
 import subprocess
 import urllib.request
-from pathlib import Path
 from typing import Callable
+
+from .permissions import WORKSPACE, resolve_in_workspace
 
 MAX_OUTPUT = 8000  # 工具返回给模型的最大字符数
 
@@ -54,7 +55,9 @@ def _params(**props: str) -> dict:
 
 @tool("list_dir", "列出某个目录下的文件和子目录。", _params(path="目录路径，当前目录写 ."))
 def list_dir(path: str = ".") -> str:
-    p = Path(path)
+    p = resolve_in_workspace(path)
+    if p is None:  # 双保险：即使有人绕过了 perms，这里还会拦
+        return "[错误] 路径在工作区之外"
     return (
         "\n".join(
             sorted(x.name + ("/" if x.is_dir() else "") for x in p.iterdir())
@@ -65,7 +68,10 @@ def list_dir(path: str = ".") -> str:
 
 @tool("read_file", "读取一个文本文件的内容。", _params(path="文件路径"))
 def read_file(path: str) -> str:
-    return Path(path).read_text(encoding="utf-8")
+    p = resolve_in_workspace(path)
+    if p is None:
+        return "[错误] 路径在工作区之外"
+    return p.read_text(encoding="utf-8")
 
 
 @tool(
@@ -74,27 +80,33 @@ def read_file(path: str) -> str:
     _params(path="文件路径", content="要写入的完整内容"),
 )
 def write_file(path: str, content: str) -> str:
-    p = Path(path)
+    p = resolve_in_workspace(path)
+    if p is None:
+        return "[错误] 路径在工作区之外"
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(content, encoding="utf-8")
-    return f"已写入 {path}（{len(content)} 字符）"
+    return f"已写入 {p.relative_to(WORKSPACE)}（{len(content)} 字符）"
 
 
 @tool(
     "run_shell",
-    "在当前目录执行一条 shell 命令，返回退出码、标准输出和错误输出。",
+    "在工作区执行一条 shell 命令。",
     _params(command="要执行的命令"),
 )
-def run_shell(command: str) -> str:
-    p = subprocess.run(
-        command,
-        shell=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",  # Windows 控制台可能输出非 UTF-8 字节，避免解码崩溃
-        timeout=30,
-    )
+def run_shell(command: str, timeout: int = 30) -> str:
+    try:
+        p = subprocess.run(
+            command,
+            shell=True,
+            cwd=WORKSPACE,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",  # Windows 控制台可能输出非 UTF-8 字节，避免解码崩溃
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return f"[超时] 命令执行超过 {timeout} 秒，已终止。"
     return f"[exit {p.returncode}]\n{p.stdout}{p.stderr}"
 
 

@@ -8,7 +8,7 @@
 - 包名（导入名）：`agent_from_zero`；发行名：`agent-from-zero`。
 - 布局为 **src 布局 + 构建后端 `uv_build`**，包本身以 editable 模式安装进 `.venv`。
 - 版本控制：`main` 为默认分支，`origin` = `https://github.com/drop42/agent-from-zero.git`。
-- 当前**尚未**配置测试框架、linter、formatter、CI。不要假定它们存在；若需要，先征询再添加。
+- 测试用 **pytest**（dev 依赖），`uv run pytest -q` 运行；linter、formatter、CI 仍未配置，不要假定它们存在。
 
 ## 环境与版本约束
 
@@ -40,19 +40,23 @@ uv lock                     # 仅重算锁文件（如改了 requires-python）
 
 ## Agent 运行配置
 
-- 环境变量：`API_KEY`（必需）、`BASE_URL`（默认 `https://api.deepseek.com`）、`MODEL`（默认 `deepseek-chat`）。
+- 环境变量：`API_KEY`（必需）、`BASE_URL`（默认 `https://api.deepseek.com`）、`MODEL`（默认 `deepseek-chat`）、`NAMI_WORKSPACE`（默认启动时 cwd）。
 - 工具集：`list_dir` / `read_file` / `write_file` / `run_shell` / `fetch_url`，全部在 `src/agent_from_zero/tools.py`，用 `@tool(name, description, _params(...))` 注册到 `TOOLS`，`get_schemas()` 生成给模型的说明书。
-- **新增工具只写一个函数加装饰器**，不要改 `agent.py` 的主循环。
-- 执行入口只有 `tools.execute(name, args)`：未知工具、参数错误、工具异常、超长输出都在这里转成字符串，绝不抛出；输出上限 `MAX_OUTPUT = 8000`。
+- **新增工具只写一个函数加装饰器**，并在 `permissions.py` 的 `TOOL_RISK` 登记风险等级（未登记默认 `CONFIRM`）。
+- 执行链路：`agent.handle_call` → `perms.check(name, args)` → `tools.execute(name, args)`。硬规则（工作区越界、`SHELL_DENY_PATTERNS`）优先于人工确认，且不可被 `y` 放行。
+- `tools.execute` 永远返回字符串，绝不抛出；输出上限 `MAX_OUTPUT = 8000`。文件工具自身也用 `resolve_in_workspace` 二次校验。
 - 循环上限 `MAX_STEPS = 20`；模型给出的参数不是合法 JSON 时也必须回一条 tool 消息（"Error: 参数不是合法的 JSON"）。
-- ⚠️ EP02 有意**不设权限限制**：`run_shell` 直接执行命令、不确认。改动这部分前先看 `docs/02-agent-tools.md` 第七节。
+- 权限逻辑改动必须配套 `tests/test_permissions.py`；该校验依赖注入的 `ask`，不要 mock `input()`。
 
 ## 代码结构
 
 ```
 src/agent_from_zero/__init__.py   # 导出 main
-src/agent_from_zero/agent.py      # 主循环 + REPL/单次任务入口（EP02）
+src/agent_from_zero/agent.py      # 主循环 + handle_call 权限闸门 + REPL/单次任务
 src/agent_from_zero/tools.py      # 工具注册表、五个工具、execute() 统一执行器
+src/agent_from_zero/permissions.py # 硬规则 / 风险分级 / 人工确认（EP03）
+tests/conftest.py                 # 把测试工作区指向临时目录
+tests/test_permissions.py         # 权限用例
 pyproject.toml                    # 元数据、依赖、入口点、构建后端
 uv.lock                           # 锁文件
 .python-version                   # 3.12.13
@@ -60,6 +64,7 @@ README.md                         # 快速开始
 AGENTS.md                         # 本文件
 docs/01-agent-minimal-loop.md     # 教程原文（EP01：最小 Agent 循环）
 docs/02-agent-tools.md            # 教程原文（EP02：工具系统）
+docs/03-agent-permissions.md      # 教程原文（EP03：权限）
 ```
 
 - 可直接导入的代码放在 `src/agent_from_zero/` 下，新增模块即新增文件；`src` 不需也不应加入 `sys.path` 手工处理。

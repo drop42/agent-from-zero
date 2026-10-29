@@ -1,4 +1,4 @@
-"""EP02：主循环 —— 不含任何具体工具名，只负责问模型、分发工具、回填结果。"""
+"""EP03：主循环接入权限检查 —— 模型提出调用，代码裁决是否执行。"""
 
 import json
 import os
@@ -6,6 +6,7 @@ import sys
 
 from openai import OpenAI
 
+from .permissions import PermissionManager
 from .tools import execute, get_schemas
 
 BASE_URL = os.environ.get("BASE_URL", "https://api.deepseek.com")
@@ -26,7 +27,20 @@ def _client() -> OpenAI:
     return OpenAI(api_key=api_key, base_url=BASE_URL)
 
 
-def run(user_input: str, messages: list[dict]) -> str:
+def handle_call(call, perms: PermissionManager) -> str:
+    """解析参数 → 权限检查 → 执行。永远返回字符串。"""
+    name = call.function.name
+    try:
+        args = json.loads(call.function.arguments or "{}")
+    except json.JSONDecodeError:
+        return "Error: 参数不是合法的 JSON"
+    decision = perms.check(name, args)
+    if not decision.allowed:
+        return f"[权限拒绝] {decision.reason}"  # 拒绝也要回传，让模型换条路
+    return execute(name, args)
+
+
+def run(user_input: str, messages: list[dict], perms: PermissionManager) -> str:
     client = _client()
     messages.append({"role": "user", "content": user_input})
 
@@ -43,14 +57,8 @@ def run(user_input: str, messages: list[dict]) -> str:
 
         # 模型可能一轮里请求多个工具，每个都必须回应
         for call in msg.tool_calls:
-            name = call.function.name
-            try:
-                args = json.loads(call.function.arguments or "{}")
-            except json.JSONDecodeError:
-                result = "Error: 参数不是合法的 JSON"
-            else:
-                print(f"🔧 {name}({call.function.arguments[:80]})")
-                result = execute(name, args)
+            print(f"🔧 {call.function.name}({call.function.arguments[:80]})")
+            result = handle_call(call, perms)
             messages.append(
                 {"role": "tool", "tool_call_id": call.id, "content": result}
             )
@@ -61,10 +69,11 @@ def run(user_input: str, messages: list[dict]) -> str:
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     messages = [{"role": "system", "content": SYSTEM}]
+    perms = PermissionManager()  # 整个会话共用，"本次会话一直允许"记在它身上
 
     # 带参数 = 单次任务（便于脚本化）；不带参数 = 交互式对话，messages 跨轮保留
     if argv:
-        print("\n" + run(" ".join(argv), messages) + "\n")
+        print("\n" + run(" ".join(argv), messages, perms) + "\n")
         return
 
     while True:
@@ -77,4 +86,4 @@ def main(argv: list[str] | None = None) -> None:
             break
         if not q:
             continue
-        print("\n" + run(q, messages) + "\n")
+        print("\n" + run(q, messages, perms) + "\n")
