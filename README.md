@@ -7,8 +7,9 @@
 - [EP03｜权限：给 Agent 装上刹车](docs/03-agent-permissions.md)
 - [EP04｜上下文管理：别让 Agent 被自己的历史撑爆](docs/04-agent-context.md)
 - [EP05｜Skills：让 Agent 按需加载能力](docs/05-agent-skills.md)
+- [EP06｜接入聊天软件：让 Agent 走出终端](docs/06-agent-channels.md)
 
-当前实现对应 **EP05**：注册表工具系统 + 三道权限闸门 + 三层上下文管理 + 按需加载的技能（AGENTS.md 常驻、`skills/*/SKILL.md` 按需读取且对 Agent 只读）。
+当前实现对应 **EP06**：注册表工具系统 + 权限闸门 + 三层上下文 + 按需技能 + 聊天渠道（Telegram 长轮询、聊天内确认、白名单、出错回滚）。
 
 ## 快速开始
 
@@ -87,16 +88,38 @@ description: 按团队规范写 git 提交信息。用户要求提交代码或�
 - 缺 `description` 的 `SKILL.md` 会被跳过并打印提示。
 - 技能目录下的其他文件（如 `template.md`）会在加载时列出，模型可用 `read_file` 按需读取。
 
+
+## 聊天渠道（Telegram）
+
+`Session` 把「messages + 权限管理器 + 上一次 token 数」收进一个对象，`run(session, text, client)` 不再碰全局状态；渠道只负责收消息、发消息、问确认。
+
+```bash
+export TG_BOT_TOKEN=<BotFather 给的 token>   # 只放环境变量，绝不提交
+export TG_ALLOWED_USERS=<你的 Telegram 用户 ID>  # 必填，为空直接拒绝启动
+uv run agent-bot                                # 长轮询，无需公网 IP
+```
+
+- 白名单：`TG_ALLOWED_USERS` 为空时 `sys.exit`；非白名单用户的消息只记日志、不回复。
+- 聊天内确认：`make_chat_ask` 复用第 3 课的 `ask` 注入点，发确认消息后等 `y` / `n`（可附原因）/ `a`，`TG_CONFIRM_WAIT`（默认 120 秒）超时视为拒绝。
+- 等待确认期间收到的其他消息进入 `pending`，任务结束后由 `poll()` 交出，不会被误当成确认。
+- `/reset` 清空该聊天的会话与 `sessions/tg-<chat_id>.json`。
+- 出错回滚：每轮开始备份 messages，异常时整轮撤销（只撤销对话，已写入文件和已执行命令不回滚）。
+- 同一个 Bot Token 只能有一个进程在 `getUpdates`，否则返回 `HTTP 409 Conflict`（先杀掉旧的 poller）。
+- 在企业代理 / 自签证书环境，`urllib` 可能报 `CERTIFICATE_VERIFY_FAILED`；可先 `import truststore; truststore.inject_into_ssl()` 再启动。
+
 ## 结构
 
 ```
-src/agent_from_zero/agent.py        # 主循环、handle_call、上下文阈值、build_system、会话读写
+src/agent_from_zero/agent.py        # Session、run()、handle_call、build_system
 src/agent_from_zero/tools.py        # 注册表、五个工具、execute() 统一执行器
 src/agent_from_zero/permissions.py  # 硬规则、风险分级、人工确认
 src/agent_from_zero/context.py      # 截断、清理、摘要压缩、会话持久化
 src/agent_from_zero/skills.py       # SKILL.md 解析、发现、load_skill 工具
-tests/                              # 权限、上下文、技能用例
+src/agent_from_zero/telegram.py     # Telegram 长轮询渠道
+src/agent_from_zero/bot.py          # 常驻入口：白名单、聊天确认、回滚（agent-bot）
+tests/                              # 权限、上下文、技能、渠道用例
 ```
+
 - 工具输出超过 8000 字符在 `execute` 截断，进入 messages 时再按 4000 字符截断（`MAX_OUTPUT` / `MAX_TOOL_CHARS`）。
 - 工具异常、未知工具名、参数错误都作为 `Error: ...` 文本回传给模型，让它自行修正。
-- 单次任务最多 20 步（`MAX_STEPS`）。
+- 单步任务最多 20 步（`MAX_STEPS`）。

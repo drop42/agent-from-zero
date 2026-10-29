@@ -55,20 +55,26 @@ uv lock                     # 仅重算锁文件（如改了 requires-python）
 - `agent.build_system()` = 基础说明 + `project_notes()` + `skills_section()`；启动时用它覆盖 `messages[0]`，否则旧会话里是过期的技能列表。
 - 技能目录 `SKILLS_DIR = WORKSPACE / "skills"` 对 Agent 只读：`write_file` 命中它属于第 1 关硬规则，`y` 也不能放行。
 - 技能结果以 `[skill]` 开头，并在 `context.KEEP_PREFIXES` 中豁免第 2 层清理。
+- 会话状态在 `agent.Session`（messages + perms + prompt_tokens）；`run(session, text, client, ..., log=print)` 不读全局，渠道只提供 I/O 与 `ask`。
+- 渠道在 `telegram.py`（`fetch` 只拉新消息、`poll` 先交 `pending`、`send` 按 4000 字切段）；常驻入口 `bot.py`（`agent-bot`）：`TG_ALLOWED_USERS` 为空直接退出，非白名单只记日志不回复，`/reset` 清会话，每轮备份 messages 并在异常时整轮回滚。
+- 同一 Bot Token 只能有一个 `getUpdates` 进程，否则 `HTTP 409 Conflict`。Bot Token 只放环境变量，禁止写入仓库。
 
 ## 代码结构
 
 ```
 src/agent_from_zero/__init__.py   # 导出 main
-src/agent_from_zero/agent.py      # 主循环 + handle_call 权限闸门 + REPL/单次任务
+src/agent_from_zero/agent.py      # Session、run()、handle_call、build_system、REPL/单次任务
 src/agent_from_zero/tools.py      # 工具注册表、五个工具、execute() 统一执行器
 src/agent_from_zero/permissions.py # 硬规则 / 风险分级 / 人工确认（EP03）
 src/agent_from_zero/context.py     # 截断 / 清理 / 摘要 / 会话持久化（EP04）
 src/agent_from_zero/skills.py      # 技能解析、发现、load_skill（EP05）
+src/agent_from_zero/telegram.py    # Telegram 长轮询渠道（EP06）
+src/agent_from_zero/bot.py         # 常驻入口 agent-bot：白名单/聊天确认/回滚（EP06）
 tests/conftest.py                 # 把测试工作区与会话目录指向临时目录
 tests/test_permissions.py         # 权限用例
 tests/test_context.py             # 上下文用例
 tests/test_skills.py              # 技能用例
+tests/test_bot.py                 # 渠道、白名单、回滚用例
 pyproject.toml                    # 元数据、依赖、入口点、构建后端
 uv.lock                           # 锁文件
 .python-version                   # 3.12.13
@@ -79,6 +85,7 @@ docs/02-agent-tools.md            # 教程原文（EP02：工具系统）
 docs/03-agent-permissions.md      # 教程原文（EP03：权限）
 docs/04-agent-context.md          # 教程原文（EP04：上下文管理）
 docs/05-agent-skills.md           # 教程原文（EP05：技能）
+docs/06-agent-channels.md         # 教程原文（EP06：聊天渠道）
 ```
 
 - 可直接导入的代码放在 `src/agent_from_zero/` 下，新增模块即新增文件；`src` 不需也不应加入 `sys.path` 手工处理。

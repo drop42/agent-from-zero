@@ -1,4 +1,4 @@
-"""EP04：主循环接入上下文管理 —— 截断、清理、摘要三层，按真实 token 数触发。"""
+"""EP06：核心逻辑与 I/O 分离 —— 一个会话 = messages + 权限 + 上一次 token 数。"""
 
 import json
 import os
@@ -21,7 +21,6 @@ MODEL = os.environ.get("MODEL", "deepseek-chat")
 MAX_STEPS = 20  # 防止模型陷入无限循环
 
 # 超过 SOFT_LIMIT：清理旧工具结果；超过 HARD_LIMIT：摘要压缩。
-# 默认值是演示用的小值，实际应按模型窗口比例来设。
 SOFT_LIMIT = int(os.environ.get("NAMI_SOFT_LIMIT", 16000))
 HARD_LIMIT = int(os.environ.get("NAMI_HARD_LIMIT", 24000))
 
@@ -29,8 +28,6 @@ SYSTEM = (
     "你是一个能使用工具的助手，在用户当前目录下完成任务。"
     "必要时调用工具，完成后用简洁的语言汇报结果。"
 )
-
-usage = {"prompt_tokens": 0}  # 上一次调用的真实 token 数
 
 
 def build_system() -> str:
@@ -40,12 +37,30 @@ def build_system() -> str:
     return SYSTEM + skills.project_notes() + skills.skills_section()
 
 
-def _client() -> OpenAI:
+def make_client() -> OpenAI:
     """延迟构造，避免 import 阶段就要求 API_KEY。"""
     api_key = os.environ.get("API_KEY")
     if not api_key:
         sys.exit("缺少环境变量 API_KEY（以及可选的 BASE_URL / MODEL）")
     return OpenAI(api_key=api_key, base_url=BASE_URL)
+
+
+class Session:
+    """一个会话 = 一份 messages + 一个权限管理器 + 上一次的 token 数。"""
+
+    def __init__(self, name: str, ask=None, persist: bool = True):
+        self.name = name
+        self.persist = persist
+        saved = load_session(name) if persist else None
+        self.messages = saved or [{"role": "system", "content": ""}]
+        # 会话里存的是旧 system prompt，每次用最新的技能列表覆盖第一条
+        self.messages[0] = {"role": "system", "content": build_system()}
+        self.perms = PermissionManager(ask=ask)
+        self.prompt_tokens = 0
+
+    def save(self) -> None:
+        if self.persist:
+            save_session(self.name, self.messages)
 
 
 def handle_call(call, perms: PermissionManager) -> str:
@@ -61,22 +76,21 @@ def handle_call(call, perms: PermissionManager) -> str:
     return execute(name, args)
 
 
-def run(user_input: str, messages: list[dict], perms: PermissionManager) -> str:
-    client = _client()
+def run(session: Session, user_input: str, client, model: str = MODEL, log=print) -> str:
+    messages = session.messages
     messages.append({"role": "user", "content": user_input})
 
     for _ in range(MAX_STEPS):
-        # 用上一次调用的真实 token 数，决定这一轮要不要处理
-        if usage["prompt_tokens"] > HARD_LIMIT:
-            messages[:] = compact(client, MODEL, messages)
-        elif usage["prompt_tokens"] > SOFT_LIMIT:
+        # 用上一次调用的真实 token 数决定这一轮要不要处理
+        if session.prompt_tokens > HARD_LIMIT:
+            messages[:] = compact(client, model, messages)
+        elif session.prompt_tokens > SOFT_LIMIT:
             clear_old_tool_results(messages)
 
         resp = client.chat.completions.create(
-            model=MODEL, messages=messages, tools=get_schemas()
+            model=model, messages=messages, tools=get_schemas()
         )
-        usage["prompt_tokens"] = resp.usage.prompt_tokens if resp.usage else 0
-        print(f"   [prompt_tokens={usage['prompt_tokens']}]")
+        session.prompt_tokens = resp.usage.prompt_tokens if resp.usage else 0
         msg = resp.choices[0].message
         messages.append(msg.model_dump(exclude_none=True))
 
@@ -86,8 +100,8 @@ def run(user_input: str, messages: list[dict], perms: PermissionManager) -> str:
 
         # 模型可能一轮里请求多个工具，每个都必须回应
         for call in msg.tool_calls:
-            print(f"🔧 {call.function.name}({call.function.arguments[:80]})")
-            result = handle_call(call, perms)
+            log(f"🔧 {call.function.name}({call.function.arguments[:80]})")
+            result = handle_call(call, session.perms)
             messages.append(
                 {
                     "role": "tool",
@@ -102,15 +116,13 @@ def run(user_input: str, messages: list[dict], perms: PermissionManager) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
-    messages = load_session("default") or [{"role": "system", "content": ""}]
-    # 会话里存的是旧 system prompt，用最新的技能列表覆盖第一条
-    messages[0] = {"role": "system", "content": build_system()}
-    perms = PermissionManager()
+    client = make_client()
+    session = Session("default")  # ask 不传，默认还是终端确认
 
     # 带参数 = 单次任务（便于脚本化）；不带参数 = 交互式对话
     if argv:
-        print("\n" + run(" ".join(argv), messages, perms) + "\n")
-        save_session("default", messages)
+        print("\n" + run(session, " ".join(argv), client) + "\n")
+        session.save()
         return
 
     while True:
@@ -123,5 +135,5 @@ def main(argv: list[str] | None = None) -> None:
             break
         if not q:
             continue
-        print("\n" + run(q, messages, perms) + "\n")
-        save_session("default", messages)
+        print("\n" + run(session, q, client) + "\n")
+        session.save()
