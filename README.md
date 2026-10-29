@@ -1,8 +1,11 @@
 # agent-from-zero
 
-从零手写 Agent 的配套实现，对照教程 [从零手写 Agent · EP01｜100 行代码，写出第一个 Agent](https://namiai.tech/articles/agent-minimal-loop/)。
+从零手写 Agent 的配套实现，逐课对照教程：
 
-核心只有三块：**工具**（`read_file` / `write_file` / `run_shell`）、**工具说明**（发给模型的 JSON schema）、**循环**（模型请求工具 → 代码执行 → 结果回传 → 直到模型不再请求）。
+- [EP01｜100 行代码，写出第一个 Agent](docs/01-agent-minimal-loop.md)
+- [EP02｜工具系统：加工具不再改主循环](docs/02-agent-tools.md)
+
+当前实现对应 **EP02**：装饰器 + 注册表管理工具，统一执行器把错误变成"可被模型看到的结果"，主循环里不含任何具体工具名。
 
 ## 快速开始
 
@@ -12,22 +15,47 @@ export API_KEY=你的模型密钥          # 必需
 # 可选：export BASE_URL=...          # 默认 https://api.deepseek.com
 # 可选：export MODEL=...             # 默认 deepseek-chat
 
-uv run agent-from-zero "在当前目录创建 hello.py，打印 hello，并运行它"
+uv run agent-from-zero                     # 交互式对话，messages 跨轮保留
+uv run agent-from-zero "写一个 fib.py 并运行验证"   # 单次任务
 ```
 
-> 这个版本的 Agent 能写任意文件，请**在空目录里运行它**，或用 `--project` 指向本项目、在临时目录中作为工作目录：
+交互模式输入 `exit` / `quit` 退出。
+
+> ⚠️ EP02 的版本**没有任何权限限制**：`run_shell` 会直接执行模型给出的任意命令，`write_file` 能写任意路径。
+> 请**在空目录或临时目录里运行**，不要在放着重要文件的目录里试。
 
 ```bash
 mkdir /tmp/playground && cd /tmp/playground
-uv run --project /path/to/agent-from-zero agent-from-zero "创建 hello.py 并运行"
+uv run --project /path/to/agent-from-zero agent-from-zero
 ```
 
-`run_shell` 每执行一条命令都会要求输入 `y` 确认；非交互环境一律拒绝。
+## 工具
+
+| 工具 | 作用 |
+|---|---|
+| `list_dir` | 列出目录内容 |
+| `read_file` | 读取文本文件 |
+| `write_file` | 写入文件（覆盖，自动建父目录） |
+| `run_shell` | 执行 shell 命令，30 秒超时，返回 `[exit N]` + stdout/stderr |
+| `fetch_url` | 抓取网页/接口文本 |
+
+新增工具只需写一个函数并加 `@tool(...)` 装饰器，注册表自动收录，主循环无需改动：
+
+```python
+# src/agent_from_zero/tools.py
+@tool("get_time", "返回当前时间。", _params())
+def get_time() -> str:
+    from datetime import datetime
+    return datetime.now().isoformat()
+```
 
 ## 结构
 
 ```
-src/agent_from_zero/agent.py   # 工具、工具说明、循环、CLI 入口
+src/agent_from_zero/agent.py   # 主循环（run/REPL），不含具体工具名
+src/agent_from_zero/tools.py   # 注册表、五个工具、统一执行器 execute()
 ```
 
-默认最多 20 步（`MAX_STEPS`），工具异常会作为文本结果回传给模型，让它自行修正。
+- 工具输出超过 8000 字符会被截断并注明总长度（`MAX_OUTPUT`）。
+- 工具异常、未知工具名、参数错误都作为 `Error: ...` 文本回传给模型，让它自行修正。
+- 单次任务最多 20 步（`MAX_STEPS`）。

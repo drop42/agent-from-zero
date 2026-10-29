@@ -26,8 +26,8 @@
 uv sync                     # 按 uv.lock 精确还原环境
 uv run python -V            # 确认解释器为 3.12.13
 uv run python -c "import agent_from_zero"   # 在项目环境中执行代码
-uv run agent-from-zero      # 通过 [project.scripts] 入口运行（无参数时打印用法）
-uv run agent-from-zero "在当前目录创建 hello.py 并运行"   # 执行一句话任务
+uv run agent-from-zero      # 交互式对话，messages 跨轮保留；exit/quit 退出
+uv run agent-from-zero "写一个 fib.py 并运行验证"   # 单次任务
 uv add <pkg>                # 新增运行时依赖（同时更新 pyproject.toml 与 uv.lock）
 uv add --dev <pkg>          # 新增开发依赖
 uv remove <pkg>             # 移除依赖
@@ -41,21 +41,25 @@ uv lock                     # 仅重算锁文件（如改了 requires-python）
 ## Agent 运行配置
 
 - 环境变量：`API_KEY`（必需）、`BASE_URL`（默认 `https://api.deepseek.com`）、`MODEL`（默认 `deepseek-chat`）。
-- 工具集：`read_file` / `write_file` / `run_shell`，三者都在 `src/agent_from_zero/agent.py`；`run_shell` 每次执行需人工输入 `y` 确认，非交互环境下直接拒绝。
-- 循环上限 `MAX_STEPS = 20`；工具异常会被捕获成字符串结果回传给模型，而不是中断进程。
-- `TOOLS`（给模型的说明）与 `TOOL_FUNCS`（实际执行）必须同名对应；新增工具时两处同步。
+- 工具集：`list_dir` / `read_file` / `write_file` / `run_shell` / `fetch_url`，全部在 `src/agent_from_zero/tools.py`，用 `@tool(name, description, _params(...))` 注册到 `TOOLS`，`get_schemas()` 生成给模型的说明书。
+- **新增工具只写一个函数加装饰器**，不要改 `agent.py` 的主循环。
+- 执行入口只有 `tools.execute(name, args)`：未知工具、参数错误、工具异常、超长输出都在这里转成字符串，绝不抛出；输出上限 `MAX_OUTPUT = 8000`。
+- 循环上限 `MAX_STEPS = 20`；模型给出的参数不是合法 JSON 时也必须回一条 tool 消息（"Error: 参数不是合法的 JSON"）。
+- ⚠️ EP02 有意**不设权限限制**：`run_shell` 直接执行命令、不确认。改动这部分前先看 `docs/02-agent-tools.md` 第七节。
 
 ## 代码结构
 
 ```
 src/agent_from_zero/__init__.py   # 导出 main
-src/agent_from_zero/agent.py      # 工具 + 工具说明 + Agent 循环（EP01）
+src/agent_from_zero/agent.py      # 主循环 + REPL/单次任务入口（EP02）
+src/agent_from_zero/tools.py      # 工具注册表、五个工具、execute() 统一执行器
 pyproject.toml                    # 元数据、依赖、入口点、构建后端
 uv.lock                           # 锁文件
 .python-version                   # 3.12.13
 README.md                         # 快速开始
 AGENTS.md                         # 本文件
 docs/01-agent-minimal-loop.md     # 教程原文（EP01：最小 Agent 循环）
+docs/02-agent-tools.md            # 教程原文（EP02：工具系统）
 ```
 
 - 可直接导入的代码放在 `src/agent_from_zero/` 下，新增模块即新增文件；`src` 不需也不应加入 `sys.path` 手工处理。
