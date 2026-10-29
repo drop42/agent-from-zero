@@ -47,6 +47,10 @@ uv lock                     # 仅重算锁文件（如改了 requires-python）
 - `tools.execute` 永远返回字符串，绝不抛出；输出上限 `MAX_OUTPUT = 8000`。文件工具自身也用 `resolve_in_workspace` 二次校验。
 - 循环上限 `MAX_STEPS = 20`；模型给出的参数不是合法 JSON 时也必须回一条 tool 消息（"Error: 参数不是合法的 JSON"）。
 - 权限逻辑改动必须配套 `tests/test_permissions.py`；该校验依赖注入的 `ask`，不要 mock `input()`。
+- 上下文管理在 `context.py`：`truncate_tool_result`（进 messages 前 4000 字符，头尾都留）、`clear_old_tool_results`（只改 content 不删消息）、`compact`（只在 user 消息处切，system + 摘要 + 最近 2 轮）。阈值 `SOFT_LIMIT` / `HARD_LIMIT` 默认 16000 / 24000，可用 `NAMI_SOFT_LIMIT` / `NAMI_HARD_LIMIT` 覆盖。
+- 触发依据是 API 返回的 `usage.prompt_tokens`（`agent.usage`），不要自己估算 token。
+- 会话文件在 `$NAMI_STATE_DIR/sessions/<name>.json`（默认 `~/.nami-agent`），**必须在工作区之外**；`tests/test_context.py` 会校验这一点。
+- 断言 tool 消息配对用 `context.check_pairing`，压缩改动后必须跑。
 
 ## 代码结构
 
@@ -55,8 +59,10 @@ src/agent_from_zero/__init__.py   # 导出 main
 src/agent_from_zero/agent.py      # 主循环 + handle_call 权限闸门 + REPL/单次任务
 src/agent_from_zero/tools.py      # 工具注册表、五个工具、execute() 统一执行器
 src/agent_from_zero/permissions.py # 硬规则 / 风险分级 / 人工确认（EP03）
-tests/conftest.py                 # 把测试工作区指向临时目录
+src/agent_from_zero/context.py     # 截断 / 清理 / 摘要 / 会话持久化（EP04）
+tests/conftest.py                 # 把测试工作区与会话目录指向临时目录
 tests/test_permissions.py         # 权限用例
+tests/test_context.py             # 上下文用例
 pyproject.toml                    # 元数据、依赖、入口点、构建后端
 uv.lock                           # 锁文件
 .python-version                   # 3.12.13
@@ -65,6 +71,7 @@ AGENTS.md                         # 本文件
 docs/01-agent-minimal-loop.md     # 教程原文（EP01：最小 Agent 循环）
 docs/02-agent-tools.md            # 教程原文（EP02：工具系统）
 docs/03-agent-permissions.md      # 教程原文（EP03：权限）
+docs/04-agent-context.md          # 教程原文（EP04：上下文管理）
 ```
 
 - 可直接导入的代码放在 `src/agent_from_zero/` 下，新增模块即新增文件；`src` 不需也不应加入 `sys.path` 手工处理。

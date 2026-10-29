@@ -1,4 +1,4 @@
-"""EP03：主循环接入权限检查 —— 模型提出调用，代码裁决是否执行。"""
+"""EP04：主循环接入上下文管理 —— 截断、清理、摘要三层，按真实 token 数触发。"""
 
 import json
 import os
@@ -6,6 +6,13 @@ import sys
 
 from openai import OpenAI
 
+from .context import (
+    clear_old_tool_results,
+    compact,
+    load_session,
+    save_session,
+    truncate_tool_result,
+)
 from .permissions import PermissionManager
 from .tools import execute, get_schemas
 
@@ -13,10 +20,17 @@ BASE_URL = os.environ.get("BASE_URL", "https://api.deepseek.com")
 MODEL = os.environ.get("MODEL", "deepseek-chat")
 MAX_STEPS = 20  # 防止模型陷入无限循环
 
+# 超过 SOFT_LIMIT：清理旧工具结果；超过 HARD_LIMIT：摘要压缩。
+# 默认值是演示用的小值，实际应按模型窗口比例来设。
+SOFT_LIMIT = int(os.environ.get("NAMI_SOFT_LIMIT", 16000))
+HARD_LIMIT = int(os.environ.get("NAMI_HARD_LIMIT", 24000))
+
 SYSTEM = (
     "你是一个能使用工具的助手，在用户当前目录下完成任务。"
     "必要时调用工具，完成后用简洁的语言汇报结果。"
 )
+
+usage = {"prompt_tokens": 0}  # 上一次调用的真实 token 数
 
 
 def _client() -> OpenAI:
@@ -45,9 +59,17 @@ def run(user_input: str, messages: list[dict], perms: PermissionManager) -> str:
     messages.append({"role": "user", "content": user_input})
 
     for _ in range(MAX_STEPS):
+        # 用上一次调用的真实 token 数，决定这一轮要不要处理
+        if usage["prompt_tokens"] > HARD_LIMIT:
+            messages[:] = compact(client, MODEL, messages)
+        elif usage["prompt_tokens"] > SOFT_LIMIT:
+            clear_old_tool_results(messages)
+
         resp = client.chat.completions.create(
             model=MODEL, messages=messages, tools=get_schemas()
         )
+        usage["prompt_tokens"] = resp.usage.prompt_tokens if resp.usage else 0
+        print(f"   [prompt_tokens={usage['prompt_tokens']}]")
         msg = resp.choices[0].message
         messages.append(msg.model_dump(exclude_none=True))
 
@@ -60,7 +82,12 @@ def run(user_input: str, messages: list[dict], perms: PermissionManager) -> str:
             print(f"🔧 {call.function.name}({call.function.arguments[:80]})")
             result = handle_call(call, perms)
             messages.append(
-                {"role": "tool", "tool_call_id": call.id, "content": result}
+                {
+                    "role": "tool",
+                    "tool_call_id": call.id,
+                    # 第 1 层：进入 messages 前再截断一次，头尾都留
+                    "content": truncate_tool_result(result),
+                }
             )
 
     return "（达到最大步数，已停止）"
@@ -68,12 +95,13 @@ def run(user_input: str, messages: list[dict], perms: PermissionManager) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     argv = sys.argv[1:] if argv is None else argv
-    messages = [{"role": "system", "content": SYSTEM}]
-    perms = PermissionManager()  # 整个会话共用，"本次会话一直允许"记在它身上
+    messages = load_session("default") or [{"role": "system", "content": SYSTEM}]
+    perms = PermissionManager()
 
-    # 带参数 = 单次任务（便于脚本化）；不带参数 = 交互式对话，messages 跨轮保留
+    # 带参数 = 单次任务（便于脚本化）；不带参数 = 交互式对话
     if argv:
         print("\n" + run(" ".join(argv), messages, perms) + "\n")
+        save_session("default", messages)
         return
 
     while True:
@@ -87,3 +115,4 @@ def main(argv: list[str] | None = None) -> None:
         if not q:
             continue
         print("\n" + run(q, messages, perms) + "\n")
+        save_session("default", messages)
