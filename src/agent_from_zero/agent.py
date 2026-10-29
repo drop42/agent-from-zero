@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from . import scheduler  # noqa: F401 导入即注册 plan/schedule 相关工具
 from . import mcp_client
+from . import memory  # noqa: F401 导入即注册 remember / search_sessions
 from . import planning  # noqa: F401 导入即注册 update_plan / submit_plan
 from . import subagent  # noqa: F401 导入即注册 delegate 工具
 from .context import (
@@ -39,7 +40,12 @@ def build_system() -> str:
     """基础说明 + AGENTS.md（常驻）+ 技能目录（只有名字和一句话用途）。"""
     from . import skills  # noqa: F401 导入即注册 load_skill
 
-    return SYSTEM + skills.project_notes() + skills.skills_section()
+    return (
+        SYSTEM
+        + skills.project_notes()
+        + skills.skills_section()
+        + memory.memory_section()  # 第 11 课：会话开始时的一份快照
+    )
 
 
 def make_client() -> OpenAI:

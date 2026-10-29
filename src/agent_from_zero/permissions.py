@@ -35,6 +35,8 @@ TOOL_RISK = {
     "fetch_url": Risk.CONFIRM,
     "load_skill": Risk.SAFE,  # 只读，直接放行
     "list_tasks": Risk.SAFE,
+    "remember": Risk.CONFIRM,  # 第 11 课：每一条记忆都要你点头
+    "search_sessions": Risk.SAFE,
     "update_plan": Risk.SAFE,  # 只是记一份清单
     "submit_plan": Risk.CONFIRM,  # 要走确认流程给人看
     "delegate": Risk.SAFE,  # 派出子 Agent 本身没有副作用
@@ -80,6 +82,9 @@ def render_call(name: str, args: dict, max_chars: int = 400) -> str:
     """确认界面：展示将要执行的真实内容，而不是模型的自述。"""
     if name == "run_shell":
         return f"  $ {args.get('command', '')}"
+    if name == "remember":  # 第 11 课：要记下什么，原文给人看
+        old = f"\n  原来那条（包含）：{args.get('old')}" if args.get("old") else ""
+        return f"  {args.get('action')}：{args.get('text', '')}{old}"
     if name == "submit_plan":  # 第 10 课：计划全文都要给人看
         return indent(args.get("plan", ""), "  ")
     if name == "write_file":

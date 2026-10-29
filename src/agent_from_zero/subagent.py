@@ -23,6 +23,7 @@ NEVER_FOR_SUB = {
     "cancel_task",
     "list_tasks",
     "submit_plan",  # 计划只能由主 Agent 提交
+    "remember",  # 记忆只能由主 Agent 提议
 }
 
 SUB_SYSTEM = (

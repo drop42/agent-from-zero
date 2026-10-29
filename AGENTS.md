@@ -66,6 +66,8 @@ uv lock                     # 仅重算锁文件（如改了 requires-python）
 - `agent.CURRENT` 是 `ContextVar`（并行子 Agent 各线程独立），`run()` 设置/重置它；`subagent._current()` 负责取父会话并检查层数。
 - 计划在 `planning.py`：`update_plan`（SAFE，只留最新一版，最多一个 `in_progress`）、`submit_plan`（CONFIRM，批准后把 `perms.mode` 改回 `normal`）、`enter_plan_mode`（仅由用户 `/plan` 触发，模型拿不到）。
 - 计划模式的强制点在 `PermissionManager.check`：在 `always_allowed` 之前拦截非 SAFE 且非 `submit_plan` 的调用，**不弹确认**。改动该判断前先看 `docs/10-agent-planning.md` 第二节。
+- 记忆在 `memory.py`：`MEMORY.md` 在工作区之外（2000 字上限、原子写入），`remember` 为 CONFIRM，`search_sessions` 为 SAFE 且只扫 user/assistant 消息。
+- 记忆快照只在会话开始时进 system prompt（`build_system()` 里拼接），**不要**在会话中途改 system prompt；`remember` 不在预授权白名单、也在 `NEVER_FOR_SUB` 里。
 
 ## 代码结构
 
@@ -82,6 +84,7 @@ src/agent_from_zero/scheduler.py   # 定时任务、心跳、无人值守预授�
 src/agent_from_zero/mcp_client.py  # MCP 客户端（EP08）：stdio/JSON-RPC、翻译进 TOOLS
 src/agent_from_zero/subagent.py    # 子 Agent（EP09）：delegate / delegate_parallel
 src/agent_from_zero/planning.py    # 计划（EP10）：update_plan / submit_plan / 计划模式
+src/agent_from_zero/memory.py      # 记忆（EP11）：remember / search_sessions / 快照
 examples/demo_mcp_server.py        # 示例 MCP 服务器（测试会真的启动它）
 tests/conftest.py                 # 把测试工作区与会话目录指向临时目录
 tests/test_permissions.py         # 权限用例
@@ -92,6 +95,7 @@ tests/test_scheduler.py           # 时间规则、不补跑、预授权、心�
 tests/test_mcp.py                 # 握手、注册、isError、坏服务器隔离
 tests/test_subagent.py            # 结论回传、工具清单、层数限制、并行上限
 tests/test_planning.py            # 计划模式强制只读、清单只留最新版、子 Agent 继承
+tests/test_memory.py              # 快照、增删改、上限、确认、无人值守、检索
 pyproject.toml                    # 元数据、依赖、入口点、构建后端
 uv.lock                           # 锁文件
 .python-version                   # 3.12.13
@@ -107,6 +111,7 @@ docs/07-agent-scheduler.md        # 教程原文（EP07：定时任务与心跳�
 docs/08-agent-mcp.md              # 教程原文（EP08：MCP）
 docs/09-agent-subagents.md        # 教程原文（EP09：子 Agent）
 docs/10-agent-planning.md         # 教程原文（EP10：计划）
+docs/11-agent-memory.md           # 教程原文（EP11：记忆）
 ```
 
 - 可直接导入的代码放在 `src/agent_from_zero/` 下，新增模块即新增文件；`src` 不需也不应加入 `sys.path` 手工处理。
