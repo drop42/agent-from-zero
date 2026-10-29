@@ -14,6 +14,16 @@
 - [EP10｜计划：先说要做什么，再动手](docs/10-agent-planning.md)
 - [EP11｜记忆：跨会话记住该记的](docs/11-agent-memory.md)
 
+第三部分「拆解主流 Agent」为纯分析章节，仅存档原文：
+
+- [EP12｜拆解 Claude Code](docs/12-agent-claude-code.md)
+- [EP13｜拆解 Codex](docs/13-agent-codex.md)
+- [EP14｜拆解 Pi](docs/14-agent-pi.md)
+- [EP15｜拆解 Grok Bot](docs/15-agent-grok.md)
+- [EP16｜拆解 DeepSeek Harness](docs/16-agent-deepseek-harness.md)
+- [EP17｜拆解 OpenClaw 与 Hermes](docs/17-agent-openclaw-hermes.md)
+- [EP18｜总对照表](docs/18-agent-comparison.md)
+
 当前实现对应 **EP11**：注册表工具 + 权限闸门 + 上下文管理 + 按需技能 + 聊天渠道 + 定时任务 + MCP + 子 Agent + 计划 + 记忆（长期记忆逐条确认 + 会话检索）。
 
 ## 快速开始
